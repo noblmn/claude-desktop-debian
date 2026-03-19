@@ -994,6 +994,19 @@ class KvmBackend extends BackendBase {
                 this.virtiofsdProcess = null;
             });
             log(`KvmBackend: virtiofsd started, socket=${virtiofsSock}`);
+
+            // Wait for virtiofsd to create its socket before starting QEMU
+            const vfsWaitStart = Date.now();
+            while (!fs.existsSync(virtiofsSock) && Date.now() - vfsWaitStart < 5000) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+            if (fs.existsSync(virtiofsSock)) {
+                log(`KvmBackend: virtiofsd socket ready (${Date.now() - vfsWaitStart}ms)`);
+            } else {
+                logError('KvmBackend: virtiofsd socket not ready after 5s, proceeding without virtiofs');
+                this.virtiofsdProcess.kill();
+                this.virtiofsdProcess = null;
+            }
         } catch (e) {
             log(`KvmBackend: virtiofsd not available: ${e.message}`);
             this.virtiofsdProcess = null;
