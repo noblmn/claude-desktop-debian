@@ -32,7 +32,7 @@ const rawMenuBarMode = (process.env.CLAUDE_MENU_BAR || 'auto').toLowerCase();
 const resolvedMode = MENU_BAR_ALIASES[rawMenuBarMode] || rawMenuBarMode;
 const MENU_BAR_MODE = VALID_MENU_BAR_MODES.includes(resolvedMode) ? resolvedMode : 'auto';
 if (resolvedMode !== rawMenuBarMode) {
-  console.log(`[Frame Fix] CLAUDE_MENU_BAR '${rawMenuBarMode}' resolved to '${resolvedMode}'`);
+  console.log(`[Frame Fix] CLAUDE_MENU_BAR '${process.env.CLAUDE_MENU_BAR}' resolved to '${resolvedMode}'`);
 } else if (resolvedMode !== MENU_BAR_MODE) {
   console.warn(`[Frame Fix] Unknown CLAUDE_MENU_BAR value '${process.env.CLAUDE_MENU_BAR}', falling back to 'auto'. Valid: ${VALID_MENU_BAR_MODES.join(', ')}, or 0/1/true/false/yes/no/on/off`);
 }

@@ -37,8 +37,8 @@ By default, the menu bar is hidden but can be toggled with the Alt key (`auto` m
 | Value | Menu visible | Alt toggles | Use case |
 |-------|-------------|-------------|----------|
 | unset / `auto` | No | Yes | Default — hidden, Alt toggles |
-| `visible` / `1` / `true` / `on` | Yes | No | Stable layout, no shift on Alt |
-| `hidden` / `0` / `false` / `off` | No | No | Menu fully disabled, Alt free |
+| `visible` / `1` / `true` / `yes` / `on` | Yes | No | Stable layout, no shift on Alt |
+| `hidden` / `0` / `false` / `no` / `off` | No | No | Menu fully disabled, Alt free |
 
 ```bash
 # Always show the menu bar (no layout shift on Alt)

@@ -284,7 +284,7 @@ run_doctor() {
 			*)
 				_warn "Unknown CLAUDE_MENU_BAR: '$menu_bar_mode'"
 				_info 'Will fall back to auto'
-				_info "Valid values: auto, visible, hidden (or 0/1/true/false/yes/no/on/off)"
+				_info 'Valid values: auto, visible, hidden (or 0/1/true/false/yes/no/on/off)'
 				;;
 		esac
 	else
