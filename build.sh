@@ -1288,6 +1288,8 @@ if (serviceErrorIdx !== -1) {
 // (Windows HCS setup) which causes "Request timed out" on
 // Linux (#315). Inject a separate Linux block after the win32
 // block that only does the smol-bin copy.
+// Variable names are extracted dynamically from the win32 block
+// since minified names change between releases (#344).
 // ============================================================
 {
     const anchor = '"[VM:start] Windows VM service configured"';
@@ -1296,24 +1298,78 @@ if (serviceErrorIdx !== -1) {
         // Find the "}" closing the win32 if-block after the anchor
         const closingBrace = code.indexOf('}', anchorIdx + anchor.length);
         if (closingBrace !== -1) {
-            // Scope variables: uX()=arch, Qe=path, i=bundlePath,
-            //   ft=fs, vg=stream/pipeline, tt=logger
-            const linuxBlock =
-                'if(process.platform==="linux"){' +
-                'const _la=uX(),' +
-                '_ls=Qe.join(process.resourcesPath,`smol-bin.${_la}.vhdx`),' +
-                '_ld=Qe.join(i,"smol-bin.vhdx");' +
-                'ft.existsSync(_ls)?' +
-                '(tt.info(`[VM:start] Copying smol-bin.${_la}.vhdx to bundle (Linux)`),' +
-                'await vg.pipeline(ft.createReadStream(_ls),ft.createWriteStream(_ld)),' +
-                'tt.info(`[VM:start] smol-bin.${_la}.vhdx copied successfully`))' +
-                ':tt.warn(`[VM:start] smol-bin.${_la}.vhdx not found at ${_ls}`)' +
-                '}';
-            code = code.substring(0, closingBrace + 1) +
-                linuxBlock +
-                code.substring(closingBrace + 1);
-            console.log('  Injected Linux smol-bin copy block (skips _.configure)');
-            patchCount++;
+            // Extract minified variable names from the win32 block
+            // Search backwards from anchor to find the win32 block
+            const regionStart = Math.max(0, anchorIdx - 1000);
+            const region = code.substring(regionStart, anchorIdx);
+
+            // path var: VAR.join(process.resourcesPath,
+            const pathMatch = region.match(
+                /(\w+)\.join\(\s*process\.resourcesPath\s*,/
+            );
+            // fs var: VAR.existsSync(
+            const fsMatch = region.match(/(\w+)\.existsSync\(/);
+            // logger var: VAR.info("[VM:start]
+            const logMatch = region.match(
+                /(\w+)\.info\(\s*[`"]\[VM:start\]/
+            );
+            // stream/pipeline var: VAR.pipeline(
+            const streamMatch = region.match(/(\w+)\.pipeline\(/);
+            // arch function: const VAR=FUNC(), used in smol-bin
+            const archMatch = region.match(
+                /const\s+(\w+)\s*=\s*(\w+)\(\)\s*,\s*\w+\s*=\s*\w+\.join/
+            );
+            // bundlePath var: PATH.join(VAR,"smol-bin.vhdx")
+            const bundleMatch = region.match(
+                /\.join\(\s*(\w+)\s*,\s*"smol-bin\.vhdx"\s*\)/
+            );
+
+            if (pathMatch && fsMatch && logMatch &&
+                streamMatch && archMatch && bundleMatch) {
+                const pathVar = pathMatch[1];
+                const fsVar = fsMatch[1];
+                const logVar = logMatch[1];
+                const streamVar = streamMatch[1];
+                const archFunc = archMatch[2];
+                const bundleVar = bundleMatch[1];
+
+                const linuxBlock =
+                    'if(process.platform==="linux"){' +
+                    'const _la=' + archFunc + '(),' +
+                    '_ls=' + pathVar + '.join(process.resourcesPath,' +
+                        '`smol-bin.${_la}.vhdx`),' +
+                    '_ld=' + pathVar + '.join(' + bundleVar +
+                        ',"smol-bin.vhdx");' +
+                    fsVar + '.existsSync(_ls)?' +
+                    '(' + logVar + '.info(' +
+                        '`[VM:start] Copying smol-bin.${_la}' +
+                        '.vhdx to bundle (Linux)`),' +
+                    'await ' + streamVar + '.pipeline(' +
+                        fsVar + '.createReadStream(_ls),' +
+                        fsVar + '.createWriteStream(_ld)),' +
+                    logVar + '.info(' +
+                        '`[VM:start] smol-bin.${_la}' +
+                        '.vhdx copied successfully`))' +
+                    ':' + logVar + '.warn(' +
+                        '`[VM:start] smol-bin.${_la}' +
+                        '.vhdx not found at ${_ls}`)' +
+                    '}';
+                code = code.substring(0, closingBrace + 1) +
+                    linuxBlock +
+                    code.substring(closingBrace + 1);
+                console.log('  Injected Linux smol-bin copy block (skips _.configure)');
+                console.log(`    vars: path=${pathVar} fs=${fsVar} log=${logVar} stream=${streamVar} arch=${archFunc} bundle=${bundleVar}`);
+                patchCount++;
+            } else {
+                const missing = [];
+                if (!pathMatch) missing.push('path');
+                if (!fsMatch) missing.push('fs');
+                if (!logMatch) missing.push('logger');
+                if (!streamMatch) missing.push('stream');
+                if (!archMatch) missing.push('arch');
+                if (!bundleMatch) missing.push('bundlePath');
+                console.log(`  WARNING: Could not extract minified variable(s): ${missing.join(', ')}`);
+            }
         } else {
             console.log('  WARNING: Could not find closing brace after Windows VM service anchor');
         }
