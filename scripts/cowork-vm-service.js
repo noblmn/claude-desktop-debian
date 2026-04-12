@@ -228,8 +228,8 @@ function buildMountMap(additionalMounts, mountBinds) {
 
 /**
  * Build a merged environment for a spawned process. Combines filtered
- * daemon env with app-provided env, and translates CLAUDE_CONFIG_DIR
- * guest paths using mountMap.
+ * daemon env with app-provided env, and translates guest paths in
+ * CLAUDE_CONFIG_DIR and CLAUDE_COWORK_MEMORY_PATH_OVERRIDE using mountMap.
  */
 function buildSpawnEnv(appEnv, mountMap) {
     const mergedEnv = {
@@ -266,6 +266,44 @@ function buildSpawnEnv(appEnv, mountMap) {
         }
     }
 
+
+    // Translate CLAUDE_COWORK_MEMORY_PATH_OVERRIDE from guest path to
+    // host path. The Electron app sets this to /sessions/{id}/mnt/.auto-memory
+    // regardless of backend, but on HostBackend the /sessions/ directory
+    // does not exist. Try translateGuestPath first (works if .auto-memory
+    // is in mountMap via additionalMounts), then fall back to resolving
+    // the mount-name portion the way HostBackend.mountPath() would —
+    // via resolveSubpath() — so the path resolves to a writable host
+    // location (typically ~/.auto-memory).
+    if (mergedEnv.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE) {
+        const memPath = mergedEnv.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE;
+        if (memPath.startsWith('/sessions/')) {
+            const translated = translateGuestPath(memPath, mountMap);
+            if (translated) {
+                log(`buildSpawnEnv: translated CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: ${memPath} -> ${translated}`);
+                mergedEnv.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = translated;
+            } else {
+                // .auto-memory is an internal Cowork path typically not
+                // present in additionalMounts. Extract the mount-name
+                // (and any trailing subpath) and resolve via
+                // resolveSubpath, mirroring HostBackend.mountPath().
+                const match = memPath.match(
+                    /^\/sessions\/[^/]+\/mnt\/([^/]+)(\/.*)?$/
+                );
+                if (match) {
+                    const hostPath = path.join(
+                        resolveSubpath(match[1]),
+                        match[2] || ''
+                    );
+                    log(`buildSpawnEnv: resolved CLAUDE_COWORK_MEMORY_PATH_OVERRIDE via fallback: ${memPath} -> ${hostPath}`);
+                    mergedEnv.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = hostPath;
+                } else {
+                    log(`buildSpawnEnv: could not translate CLAUDE_COWORK_MEMORY_PATH_OVERRIDE, removing: ${memPath}`);
+                    delete mergedEnv.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE;
+                }
+            }
+        }
+    }
     return mergedEnv;
 }
 
