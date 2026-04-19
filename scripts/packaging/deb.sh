@@ -68,7 +68,7 @@ echo 'Application files copied to Electron resources directory'
 
 # Copy shared launcher library
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cp "$script_dir/launcher-common.sh" "$install_dir/lib/$package_name/" || exit 1
+cp "$(dirname "$script_dir")/launcher-common.sh" "$install_dir/lib/$package_name/" || exit 1
 echo 'Shared launcher library copied'
 
 # --- Create Desktop Entry ---

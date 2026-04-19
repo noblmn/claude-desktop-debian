@@ -46,7 +46,7 @@ echo 'Application files copied to Electron resources directory'
 # Copy shared launcher library
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$appdir_path/usr/lib/claude-desktop" || exit 1
-cp "$script_dir/launcher-common.sh" "$appdir_path/usr/lib/claude-desktop/" || exit 1
+cp "$(dirname "$script_dir")/launcher-common.sh" "$appdir_path/usr/lib/claude-desktop/" || exit 1
 echo 'Shared launcher library copied'
 
 # Ensure Electron is bundled within the AppDir for portability
