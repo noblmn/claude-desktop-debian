@@ -189,25 +189,53 @@ JSEOF
 	if [[ $parser == 'python3' ]]; then
 		parsed_output=$(python3 - "$mounts_json" 2>/dev/null <<'PYEOF'
 import json, sys
+def fmt(p):
+    if isinstance(p, str):
+        return p
+    if isinstance(p, dict) and isinstance(p.get('src'), str) \
+            and isinstance(p.get('dst'), str):
+        return p['src'] + ' -> ' + p['dst']
+    return None
 m = json.loads(sys.argv[1])
 for p in m.get('additionalROBinds', []):
-    print(p)
+    s = fmt(p)
+    if s is not None:
+        print(s)
 print('---')
 for p in m.get('additionalBinds', []):
-    print(p)
+    s = fmt(p)
+    if s is not None:
+        print(s)
 print('---')
 for p in m.get('disabledDefaultBinds', []):
-    print(p)
+    if isinstance(p, str):
+        print(p)
 PYEOF
 )
 	else
 		parsed_output=$(node - "$mounts_json" 2>/dev/null <<'JSEOF'
+function fmt(p) {
+    if (typeof p === 'string') return p;
+    if (p && typeof p === 'object'
+        && typeof p.src === 'string' && typeof p.dst === 'string') {
+        return p.src + ' -> ' + p.dst;
+    }
+    return null;
+}
 const m = JSON.parse(process.argv[1]);
-(m.additionalROBinds || []).forEach(p => console.log(p));
+(m.additionalROBinds || []).forEach(p => {
+    const s = fmt(p);
+    if (s !== null) console.log(s);
+});
 console.log('---');
-(m.additionalBinds || []).forEach(p => console.log(p));
+(m.additionalBinds || []).forEach(p => {
+    const s = fmt(p);
+    if (s !== null) console.log(s);
+});
 console.log('---');
-(m.disabledDefaultBinds || []).forEach(p => console.log(p));
+(m.disabledDefaultBinds || []).forEach(p => {
+    if (typeof p === 'string') console.log(p);
+});
 JSEOF
 )
 	fi
@@ -241,6 +269,31 @@ JSEOF
 		while IFS= read -r bind_path; do
 			_info "    - $bind_path"
 		done <<< "$rw_binds"
+	fi
+
+	# Warn when an additional mount's dst lands on a default RO mount.
+	# bwrap honors the later mount, so this silently replaces a system
+	# path inside the sandbox. Only the {src, dst} form can trigger this
+	# (string form mounts src=dst, and additionalBinds requires src under
+	# $HOME, which never overlaps the default RO set).
+	local shadow_input=''
+	[[ -n $ro_binds ]] && shadow_input+="${ro_binds}"$'\n'
+	[[ -n $rw_binds ]] && shadow_input+="${rw_binds}"$'\n'
+	shadow_input=${shadow_input%$'\n'}
+	local shadow_line shadow_dst
+	if [[ -n $shadow_input ]]; then
+		while IFS= read -r shadow_line; do
+			[[ $shadow_line == *' -> '* ]] || continue
+			shadow_dst=${shadow_line##* -> }
+			# Long alternation pattern (STYLEGUIDE 80-col exception)
+			case $shadow_dst in
+				/usr|/usr/*|/etc|/etc/*|/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/lib64|/lib64/*)
+					_warn \
+						"Mount dst '${shadow_dst}' shadows a default sandbox mount" \
+						'(may break system tools inside the sandbox)'
+					;;
+			esac
+		done <<< "$shadow_input"
 	fi
 
 	local critical_warned=false
