@@ -654,6 +654,74 @@ X-GNOME-Autostart-enabled=true
         console.log('[Autostart] XDG Autostart shim installed');
       }
 
+      // Detect in-place package upgrade (dpkg/rpm rename-replace of
+      // app.asar) and offer a restart, since post-swap window loads
+      // mix v(N+1) HTML/assets with the v(N) IPC/preload still in
+      // memory. AppImage and Nix are immune (immutable running file);
+      // the watcher just no-ops there. Fixes: see PR #564.
+      const armUpgradeWatcher = () => {
+        if (process.platform !== 'linux') return;
+        const fs = require('fs');
+        const asarPath = path.join(process.resourcesPath, 'app.asar');
+        let baseline;
+        try { baseline = fs.statSync(asarPath); } catch { return; }
+
+        let notified = false;
+        let debounceTimer = null;
+        const promptRestart = () => {
+          if (notified) return;
+          let cur;
+          try { cur = fs.statSync(asarPath); } catch { return; }
+          // ino catches rename-replace; mtime catches in-place
+          // rewrite. Either is sufficient on its own for dpkg/rpm,
+          // but checking both keeps us honest against odd packagers.
+          if (cur.ino === baseline.ino
+            && cur.mtimeMs === baseline.mtimeMs) return;
+          notified = true;
+          console.log('[Frame Fix] app.asar replaced — prompting restart');
+          // whenReady() resolves immediately if already ready, so no
+          // isReady() branch needed. Linux libnotify ignores
+          // Notification.actions (macOS-only), so whole-notification
+          // click is the only restart affordance.
+          result.app.whenReady().then(() => {
+            try {
+              const n = new result.Notification({
+                title: 'Claude Desktop has been updated',
+                body: 'Click to restart and apply the update.',
+              });
+              n.on('click', () => {
+                result.app.relaunch();
+                result.app.quit();
+              });
+              n.show();
+            } catch (err) {
+              console.warn('[Frame Fix] Restart notification failed:',
+                err.message);
+            }
+          });
+        };
+
+        // Watch the parent dir, not the file: file-level fs.watch
+        // loses the inode across rename-replace. Filename filter
+        // ignores unrelated activity in the resources dir; 5s
+        // debounce covers dpkg's .dpkg-new → rename dance and
+        // similar multi-stage swaps in rpm/Nix.
+        const watcher = fs.watch(path.dirname(asarPath),
+          (_evt, filename) => {
+            if (filename !== 'app.asar') return;
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(promptRestart, 5000);
+          });
+        // App's other handles drive process lifetime; the watcher
+        // shouldn't keep the loop alive on its own.
+        watcher.unref();
+        console.log('[Frame Fix] Upgrade watcher armed:', asarPath);
+      };
+      try { armUpgradeWatcher(); } catch (err) {
+        console.warn('[Frame Fix] Upgrade watcher failed to arm:',
+          err.message);
+      }
+
       console.log('[Frame Fix] Patches built successfully');
     }
 
