@@ -71,10 +71,108 @@ _cowork_pkg_hint() {
 				arch)          pkg='qemu-full' ;;
 			esac
 			;;
+		ibus-gtk3)
+			# Arch ships the GTK3 immodule as part of the main ibus
+			# package; Debian/Ubuntu and Fedora split it out.
+			case "$distro" in
+				arch) pkg='ibus' ;;
+				*)    pkg='ibus-gtk3' ;;
+			esac
+			;;
 		*) pkg="$tool" ;;
 	esac
 
 	printf '%s' "$pkg_cmd $pkg"
+}
+
+# Return 0 if the named package is installed, 1 otherwise. Returns 2
+# (treated as "unknown") when no recognized package manager is
+# available — callers should not warn in that case to avoid false
+# positives on unsupported distros.
+_pkg_installed() {
+	local distro="$1"
+	local pkg="$2"
+	case "$distro" in
+		debian|ubuntu)
+			command -v dpkg-query &>/dev/null || return 2
+			dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null \
+				| grep -q 'install ok installed'
+			;;
+		fedora)
+			command -v rpm &>/dev/null || return 2
+			rpm -q "$pkg" &>/dev/null
+			;;
+		arch)
+			command -v pacman &>/dev/null || return 2
+			pacman -Q "$pkg" &>/dev/null
+			;;
+		*) return 2 ;;
+	esac
+}
+
+# Diagnose IBus / GTK input-method misconfigurations that break
+# keyboard input in the chat (#550). Surfaces:
+#   - CLAUDE_GTK_IM_MODULE override visibility (informational)
+#   - XWayland-with-IBus routing note: on a Wayland session Electron
+#     defaults to XWayland (preserves global hotkeys), which forces
+#     the IBus path through XIM — a known weak link for some IMEs.
+#   - ibus-gtk3 package missing when GTK_IM_MODULE=ibus
+#   - GTK immodules cache stale: active module not listed by
+#     gtk-query-immodules-3.0 (--update-cache fixes it)
+#
+# Usage: _doctor_check_im_modules <distro_id>
+_doctor_check_im_modules() {
+	local distro="$1"
+	local active_im="${CLAUDE_GTK_IM_MODULE:-${GTK_IM_MODULE:-}}"
+
+	if [[ -n ${CLAUDE_GTK_IM_MODULE:-} ]]; then
+		_info "CLAUDE_GTK_IM_MODULE=$CLAUDE_GTK_IM_MODULE" \
+			"(overrides GTK_IM_MODULE for Electron)"
+	fi
+
+	if [[ ${XDG_SESSION_TYPE:-} == 'wayland' \
+		&& -z ${CLAUDE_USE_WAYLAND:-} ]]; then
+		_info \
+			'IME note: Wayland session, Electron via XWayland —' \
+			'IBus path goes through XIM (lossy for some IMEs).'
+		_info \
+			'Tip: CLAUDE_USE_WAYLAND=1 enables native Wayland IME' \
+			'(loses global hotkeys).'
+	fi
+
+	# Nothing further to check without an active IM module.
+	[[ -n $active_im ]] || return 0
+
+	# ibus-gtk3 package check — only when the active module is ibus.
+	# rc=1 means definitely missing (warn); rc=2 means unsupported
+	# distro / no package manager (skip silently to avoid false
+	# negatives). On warn, return early — `apt install` refreshes
+	# the immodules cache, so the cache check below would be noise.
+	if [[ $active_im == 'ibus' ]]; then
+		_pkg_installed "$distro" ibus-gtk3
+		case $? in
+			1)
+				_warn \
+					"GTK_IM_MODULE=ibus but ibus-gtk3 is not installed"
+				_info "Fix: $(_cowork_pkg_hint "$distro" ibus-gtk3)"
+				return 0
+				;;
+		esac
+	fi
+
+	# GTK immodules cache check. gtk-query-immodules-3.0 ships with
+	# libgtk-3-bin (Debian/Ubuntu) / gtk3 (Fedora/Arch); absence
+	# means GTK 3 isn't in use — skip silently rather than warn.
+	command -v gtk-query-immodules-3.0 &>/dev/null || return 0
+
+	if ! gtk-query-immodules-3.0 2>/dev/null \
+		| grep -q "\"$active_im\""; then
+		_warn \
+			"GTK immodules: '$active_im' not listed by" \
+			"gtk-query-immodules-3.0 (cache may be stale)"
+		_info \
+			'Fix: sudo gtk-query-immodules-3.0 --update-cache'
+	fi
 }
 
 # Read the version string from the version file beside an Electron binary.
@@ -345,6 +443,11 @@ run_doctor() {
 	local _doctor_failures=0
 	_doctor_colors
 
+	# Distro ID is shared between the IM-module check (#550) and the
+	# Cowork Mode section further down. Resolve once.
+	local _distro_id
+	_distro_id=$(_cowork_distro_id)
+
 	echo -e "${_bold}Claude Desktop Diagnostics${_reset}"
 	echo '================================'
 	echo
@@ -380,6 +483,9 @@ run_doctor() {
 			"(DISPLAY and WAYLAND_DISPLAY are unset)"
 		_info 'Fix: Run from within an X11 or Wayland session, not a TTY'
 	fi
+
+	# -- Input method (IBus / GTK) --
+	_doctor_check_im_modules "$_distro_id"
 
 	# -- Menu bar mode --
 	local menu_bar_mode="${CLAUDE_MENU_BAR:-}"
@@ -588,10 +694,6 @@ print(len(servers))
 	echo
 	echo -e "${_bold}Cowork Mode${_reset}"
 	echo '----------------'
-
-	# Detect distro for package hints
-	local _distro_id
-	_distro_id=$(_cowork_distro_id)
 
 	# Determine whether bwrap is the active backend (for severity
 	# of bwrap-related diagnostics). Auto-detect prefers bwrap, so
